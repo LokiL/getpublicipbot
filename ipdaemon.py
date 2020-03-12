@@ -1,110 +1,68 @@
 #!/usr/bin/python3
 # coding=utf-8
-# code for win service - http://iqa.com.ua/programming/python/windows-services-from-python-scripts
-
-import win32serviceutil
-import win32service
-import win32event
-import servicemanager
-
 import argparse
 import sys
+import time
 import urllib.request
-from telebot import apihelper
+
+
 
 import telebot
 from loguru import logger
 
+parser = argparse.ArgumentParser(add_help=True, description='ipdaemonbot Bot for Telegram')
+parser.add_argument('--token', action='store', help='Authentication token [required]', required=True)
+parser.add_argument('--p_login', action='store', help='Proxy login [optional]', required=False)
+parser.add_argument('--p_pass', action='store', help='Proxy password [optional]', required=False)
+parser.add_argument('--p_adress', action='store', help='Proxy adress [optional]', required=False)
+parser.add_argument('--p_port', action='store', help='Proxy port [optional]', required=False)
 
-class AppServerSvc(win32serviceutil.ServiceFramework):
-    _svc_name_ = "Get IP Daemon"
-    _svc_display_name_ = "Get IP Daemon"
-    _svc_description_ = "Get IP Daemon"
+args = parser.parse_args()
 
-    def __init__(self, args):
-        win32serviceutil.ServiceFramework.__init__(self, args)
-        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
-        self.hWaitResume = win32event.CreateEvent(None, 0, 0, None)
-        self.timeout = 10000  # Пауза между выполнением основного цикла службы в миллисекундах
-        self.resumeTimeout = 1000
-        self._paused = False
+logger.add(sys.stderr, format="{time} {level} {message}", filter="my_module", level="INFO")
+logger.add("ipdaemon.log", rotation="10 MB", enqueue=True)
 
-    def SvcStop(self):
-        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        win32event.SetEvent(self.hWaitStop)
-        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE,
-                              servicemanager.PYS_SERVICE_STOPPED,
-                              (self._svc_name_, ''))
-
-    def SvcPause(self):
-        self.ReportServiceStatus(win32service.SERVICE_PAUSE_PENDING)
-        self._paused = True
-        self.ReportServiceStatus(win32service.SERVICE_PAUSED)
-        servicemanager.LogInfoMsg("The %s service has paused." % (self._svc_name_,))
-
-    def SvcContinue(self):
-        self.ReportServiceStatus(win32service.SERVICE_CONTINUE_PENDING)
-        win32event.SetEvent(self.hWaitResume)
-        self.ReportServiceStatus(win32service.SERVICE_RUNNING)
-        servicemanager.LogInfoMsg("The %s service has resumed." % (self._svc_name_,))
-
-    def SvcDoRun(self):
-        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE,
-                              servicemanager.PYS_SERVICE_STARTED,
-                              (self._svc_name_, ''))
-        self.main()
-
-    def main(self):
-        # Здесь выполняем необходимые действия при старте службы
-        bot_token = ''
-        proxy_login = ''
-        proxy_password = ''
-        proxy_adress = '',
-        proxy_port = ''
+if args.p_adress is not None:
+    try:
+        from telebot import apihelper
 
         apihelper.proxy = {
             'https': 'socks5h://{proxy_login}:{proxy_password}@{proxy_adress}:{proxy_port}'.format(
-                proxy_login=proxy_login,
-                proxy_password=proxy_password,
-                proxy_adress=proxy_adress,
-                proxy_port=proxy_port)}
+                proxy_login=args.p_login,
+                proxy_password=args.p_pass,
+                proxy_adress=args.p_adress,
+                proxy_port=args.p_port)}
+        logger.info("Started with proxy: {proxy_login}:{proxy_password}@{proxy_adress}:{proxy_port}".format(
+            proxy_login=args.p_login,
+            proxy_password=args.p_pass,
+            proxy_adress=args.p_adress,
+            proxy_port=args.p_port))
+    except Exception as e:
+        logger.exception(e)
 
-        ipdaemonbot = telebot.TeleBot(bot_token)
+bot_token = args.token
+ipdaemonbot = telebot.TeleBot(bot_token)
 
-        @ipdaemonbot.message_handler(commands=['ip'])
-        @logger.catch
-        def get_ip(message):
-            print(1)
-            external_ip = urllib.request.urlopen('https://ident.me').read().decode('utf8')
-            ipdaemonbot.send_message(message.chat.id, external_ip)
 
-        servicemanager.LogInfoMsg("Hello! Get IP Daemon here.")
-        while True:
-            # Здесь должен находиться основной код сервиса
-            servicemanager.LogInfoMsg("I'm still here.")
+@ipdaemonbot.message_handler(commands=['ip'])
+@logger.catch
+def get_ip(message):
+    print(1)
+    external_ip = urllib.request.urlopen('https://ident.me').read().decode('utf8')
+    ipdaemonbot.send_message(message.chat.id, external_ip)
 
-            ipdaemonbot.polling(none_stop=True)
-
-            # Проверяем не поступила ли команда завершения работы службы
-            rc = win32event.WaitForSingleObject(self.hWaitStop, self.timeout)
-            if rc == win32event.WAIT_OBJECT_0:
-                # Здесь выполняем необходимые действия при остановке службы
-                servicemanager.LogInfoMsg("Bye!")
-                break
-
-            # Здесь выполняем необходимые действия при приостановке службы
-            if self._paused:
-                servicemanager.LogInfoMsg("I'm paused... Keep waiting...")
-            # Приостановка работы службы
-            while self._paused:
-                # Проверям не поступила ли команда возобновления работы службы
-                rc = win32event.WaitForSingleObject(self.hWaitResume, self.resumeTimeout)
-                if rc == win32event.WAIT_OBJECT_0:
-                    self._paused = False
-                    # Здесь выполняем необходимые действия при возобновлении работы службы
-                    servicemanager.LogInfoMsg("Yeah! Let's continue!")
-                    break
-
+@ipdaemonbot.message_handler(commands=['/ping'])
+@logger.catch
+def get_ip(message):
+    ipdaemonbot.send_message(message.chat.id, "pong")
 
 if __name__ == '__main__':
-    win32serviceutil.HandleCommandLine(AppServerSvc)
+
+    while True:
+        try:
+            print(2)
+            ipdaemonbot.polling(none_stop=True)
+        except Exception as e:
+            logger.exception(e)
+            time.sleep(15)
+            break
